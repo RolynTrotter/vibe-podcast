@@ -7,3 +7,4 @@ __pycache__/
 *.wav
 *.m4a
 *.mp3
+*.bak-*

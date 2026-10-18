@@ -167,7 +167,8 @@ def main():
     if a.push and not a.library:
         sys.exit("--push needs --library, or FCP blocks on a library picker")
     spec = json.load(open(a.spec) if a.spec else sys.stdin)
-    Path(a.out).write_text(build(spec, a.library, a.style), encoding="utf-8")
+    out = motionkit.safe_output(a.out, *([a.spec] if a.spec else []))
+    out.write_text(build(spec, a.library, a.style), encoding="utf-8")
     print("wrote", a.out)
     if a.push:
         subprocess.run(["open", "-g", "-a", "Final Cut Pro", a.out], check=True)

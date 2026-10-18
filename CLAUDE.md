@@ -29,6 +29,11 @@ Episode 5 was started on 2026-01-04 (`~/Movies/Podcast5`).
 
 ## Conventions
 
+- **Non-destructive, always.** Raw footage, audio, the user's FCP libraries, and installed Motion
+  templates are read-only sources. Every edit writes a new file (or a new FCP library or event) next to
+  them, never over them. No in-place `ffmpeg -y` onto a source, no `sed -i` on a .motn/.moti that
+  isn't our own copy, no deletes. If something really must be replaced, copy the original to a
+  timestamped `.bak` first and say so. The user has backups but doesn't want to have to test them.
 - Don't commit media, FCP libraries, or renders (see `.gitignore`). Do commit templates
   (`.motn`/`.moti`) and small specs.
 - Never write into the user's FCP libraries or Motion Templates folder without asking.

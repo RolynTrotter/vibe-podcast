@@ -19,6 +19,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -28,6 +29,18 @@ HEADER = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE ozxmlscene>\n'
 NODE_TAGS = {"layer", "group", "scenenode", "footage", "clip", "behavior", "filter", "mask"}
 TEMPLATES_ROOT = Path.home() / "Library/Containers/com.apple.motionapp/Data/Movies/Motion Templates.localized"
 TEXT_PARAM_ID = "369"  # Object > Text
+
+
+def safe_output(out, *sources):
+    """Non-destructive writes: never write over an input, and keep a .bak of anything replaced."""
+    out = Path(out).expanduser().resolve()
+    if any(out == Path(src).expanduser().resolve() for src in sources):
+        sys.exit(f"refusing to overwrite the source {out}; pick a new output path")
+    if out.exists():
+        bak = out.with_name(f"{out.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copy2(out, bak)
+        print(f"note: {out.name} existed; previous version kept as {bak.name}", file=sys.stderr)
+    return out
 
 
 def parse_time(s):
@@ -203,7 +216,7 @@ def cmd_set_text(a):
         val = val.replace("\\n", "\n")
         node = set_text(tree.getroot(), key, val, a.rename)
         print(f"[{node.get('id')}] -> {val!r}")
-    save(tree, a.out)
+    save(tree, safe_output(a.out, a.file))
     print("wrote", a.out)
 
 
@@ -257,8 +270,12 @@ def cmd_install(a):
     src = Path(a.file)
     name = a.name or re.sub(r"_\d{4}-\d{2}-\d{2}_\d{4}$", "", src.stem)
     dest = TEMPLATES_ROOT / f"{a.kind}.localized" / (a.category or "Templates") / name
-    if dest.exists() and not a.force:
-        sys.exit(f"{dest} exists; pass --force to overwrite (Motion keeps its own copy, back it up first)")
+    if dest.exists():
+        if not a.force:
+            sys.exit(f"{dest} exists; --force replaces it (the old folder is kept as a .bak copy)")
+        bak = dest.with_name(f"{dest.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copytree(dest, bak)
+        print("backed up existing template to", bak)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "Media").mkdir(exist_ok=True)
     shutil.copy(src, dest / f"{name}.moti")
