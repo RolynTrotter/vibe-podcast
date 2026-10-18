@@ -6,6 +6,9 @@ Motion has no AppleScript dictionary or CLI renderer, but its files are plain
 
   inspect      layer tree, text content, fonts, timing, published params, media refs
   set-text     replace the text of one or more text layers (keeps style runs valid)
+  keyframes    every animated parameter with its keyframe times/values
+  preview      write copies parked at given times (Motion opens a file at its
+               saved playhead), optionally open them in Motion for a screenshot
   install      copy a project into Motion's Titles folder as an FCP title template
 
 Times in ozml are rational "value timescale flags epoch" strings; 596596/120000 s
@@ -15,6 +18,7 @@ import argparse
 import json
 import re
 import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -203,6 +207,52 @@ def cmd_set_text(a):
     print("wrote", a.out)
 
 
+def keyframes(root):
+    """Yield (node path, param path, [(t, value)]) for every curve with keypoints."""
+    keep = {"layer", "scenenode", "behavior", "filter"}
+
+    def walk(e, nodes, params):
+        for c in e:
+            nm = c.get("name")
+            n2 = nodes + [nm] if c.tag in keep and nm else nodes
+            p2 = params + [nm] if c.tag == "parameter" and nm else ([] if c.tag in keep else params)
+            if c.tag == "curve":
+                pts = [(parse_time(k.findtext("time")), float(k.findtext("value"))) for k in c.findall("keypoint")]
+                if pts:
+                    yield n2, p2, pts
+            yield from walk(c, n2, p2)
+
+    yield from walk(root.find("scene"), [], [])
+
+
+def cmd_keyframes(a):
+    for nodes, params, pts in keyframes(load(a.file).getroot()):
+        if not a.all and len({round(v, 4) for _, v in pts}) < 2:
+            continue  # flat curves: keyframed but not actually moving
+        if a.grep and a.grep.lower() not in " ".join(nodes + params).lower():
+            continue
+        print(f"{' > '.join(nodes[-2:])} :: {'.'.join(params[-3:])}")
+        print("    " + "  ".join(f"{t:.2f}s={v:.4g}" for t, v in pts))
+
+
+def cmd_preview(a):
+    tree = load(a.file)
+    s = tree.getroot().find("scene/sceneSettings")
+    fps = float(s.findtext("frameRate")) * (1000 / 1001 if s.findtext("NTSC") == "1" else 1)
+    out_dir = Path(a.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cur = tree.getroot().find("scene/currentFrame")
+    for t in a.at:
+        frame = round(t * fps)
+        # 120000 timebase with 1001-tick frames for NTSC rates, else whole frames.
+        cur.text = f"{frame * 4004} 120000 1 0" if s.findtext("NTSC") == "1" else f"{frame} {int(fps)} 1 0"
+        out = out_dir / f"{Path(a.file).stem}@{t:.2f}s.motn"
+        save(tree, out)
+        print(out)
+        if a.open:
+            subprocess.run(["open", "-g", "-a", "Motion", str(out)])  # -g: do not steal focus
+
+
 def cmd_install(a):
     src = Path(a.file)
     name = a.name or re.sub(r"_\d{4}-\d{2}-\d{2}_\d{4}$", "", src.stem)
@@ -229,6 +279,17 @@ def main():
     p.add_argument("--set", action="append", required=True, metavar="KEY=TEXT", help=r"use \n for line breaks")
     p.add_argument("--rename", action="store_true", help="also rename the layer to its new text")
     p.set_defaults(fn=cmd_set_text)
+    p = sub.add_parser("keyframes")
+    p.add_argument("file")
+    p.add_argument("--grep", help="only paths containing this")
+    p.add_argument("--all", action="store_true", help="include flat (non-moving) curves")
+    p.set_defaults(fn=cmd_keyframes)
+    p = sub.add_parser("preview")
+    p.add_argument("file")
+    p.add_argument("--at", type=float, nargs="+", required=True, help="seconds")
+    p.add_argument("--out-dir", default="previews")
+    p.add_argument("--open", action="store_true", help="open each copy in Motion")
+    p.set_defaults(fn=cmd_preview)
     p = sub.add_parser("install")
     p.add_argument("file")
     p.add_argument("--name")

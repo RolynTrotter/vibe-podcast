@@ -15,6 +15,8 @@ Tools live in `agent-motion/`:
 |---|---|
 | `motionkit.py inspect FILE [--json]` | Layer tree, text layers (text/font/size/position), timing in seconds, what's published to FCP, media refs |
 | `motionkit.py set-text IN OUT --set "KEY=TEXT" ...` | Rewrite text layers. KEY = layer id, layer name, or current text. `\n` for line breaks. Fixes `styleRun` lengths (UTF-16) so Motion doesn't choke |
+| `motionkit.py keyframes FILE [--grep X] [--all]` | Every animated parameter with keyframe times/values (rotation is in radians) |
+| `motionkit.py preview FILE --at 1.9 3.2 [--open]` | Writes copies parked at those times; `--open` opens them in Motion in the background (`open -g`) for an `app_screenshot` |
 | `motionkit.py install FILE --name NAME` | Copy a project into Motion's Titles folder as an FCP title template |
 | `titles_fcpxml.py SPEC.json -o OUT.fcpxml` | Cue list → FCPXML project with titles at the right times, texts filled in |
 
@@ -45,11 +47,11 @@ directors get a role suffix. Court cases go in the author slot.
    `xmllint --noout --dtdvalid <copy of FCPXMLv1_11.dtd> titles.fcpxml`. The DTDs are in
    `/Applications/Final Cut Pro.app/Contents/Frameworks/Interchange.framework/Versions/A/Resources/`.
    Copy one first, because xmllint fails on the path with spaces.
-4. The user imports it into FCP (`open -a "Final Cut Pro" titles.fcpxml`, then picks a library).
+4. The user imports it into FCP (`open -g -a "Final Cut Pro" titles.fcpxml`, then picks a library).
    The titles sit connected above a gap, so they can be copied onto the real edit.
 
 For a one-off baked card (e.g. a thumbnail or a card with a styling change FCP can't
-override), use `set-text` on the `.motn` and `open -a Motion OUT.motn` for the user to
+override), use `set-text` on the `.motn` and `open -g -a Motion OUT.motn` for the user to
 eyeball or export.
 
 ## Known unknowns (verify, then update this file)
@@ -60,9 +62,30 @@ eyeball or export.
   `titles_fcpxml.py`.
 - Whether the `text-style-def` (font family + face + size only) overrides the template's
   colour/tracking. If it does, we may need to emit fuller styles.
-- No way to render a preview frame without the GUI. Screen capture from the shell needs
-  Screen Recording permission. Computer use (if enabled) can screenshot Motion.
-  Setting `<currentFrame>` in a copy of the .motn makes Motion open at that frame.
+- Zero-click FCP import: add `<import-options>` (library location ending in `.fcpbundle`)
+  to the FCPXML and FCP imports without the library picker. A new path makes a throwaway
+  library. Not built yet, but it's the way to test the two questions above without the user.
+
+## Seeing and rendering (verified 2026-10-18)
+
+- **Preview frames:** `motionkit.py preview FILE --at T --open`, then computer-use
+  `app_screenshot` on Motion (bundle `com.apple.motionapp`), then zoom on the canvas.
+  Close the window via `app_menu File > Close`. Typing into Motion's playhead field from
+  the background does NOT move the playhead. The `<currentFrame>` copy is the reliable route.
+- **Rendering:** computer use can't press File > Share (Export Movie, Save Current Frame).
+  Ask the user to click Export. Shell `screencapture` lacks Screen Recording permission.
+- Never `open -a` without `-g`. The user is working on the same screen.
+
+## Animation (what the XML exposes)
+
+Keyframes are `curve > keypoint{time, value, in/out tangents}` under any parameter
+(Transform Position/Rotation/Scale, Blending Opacity, filter params). Behaviors (Gather In,
+Pen Speed/Pressure) are their own nodes with timing and Controls params. So we can read the
+full choreography, and retime, offset, or add keyframes programmatically. Then preview-and-screenshot to check.
+TF_Podcast_title choreography: Tiresias figures (Group 1/2) slide in from ±400 px to 1.5 s,
+then sway ±10 px / ±2° to 4.87 s. The snake image pair pops in at 1.74 s (scale 0.17→0.62 by
+2.1 s, masked by rounded rectangles) and lunges between keyframes at 2.1/3.17/4.14/4.87 s.
+The title line fades in at 1.5–1.7 s with Gather In from 1.0 s, and the episode line Gathers In at 2.37 s.
 
 ## ozml notes
 

@@ -18,7 +18,7 @@ Episode 5 was started on 2026-01-04 (`~/Movies/Podcast5`).
 ## Tools on this machine (checked 2026-10-18)
 
 - Final Cut Pro 11.0.1 (FCPXML up to 1.13; DTDs inside the app bundle), Motion 5.9. Neither has
-  an AppleScript dictionary we rely on. FCP reads FCPXML (`open -a "Final Cut Pro" x.fcpxml`).
+  an AppleScript dictionary we rely on. FCP reads FCPXML (`open -g -a "Final Cut Pro" x.fcpxml`).
   Motion files are XML, so edit them directly (see `.claude/skills/motion-graphics`).
 - ffmpeg/ffprobe, uv, python3.14, node, yt-dlp (Homebrew). No local Whisper yet.
 - Blender (has an MCP), OBS.

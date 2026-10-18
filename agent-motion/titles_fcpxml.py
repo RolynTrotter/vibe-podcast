@@ -147,7 +147,7 @@ def main():
     a = ap.parse_args()
     spec = json.load(open(a.spec) if a.spec else sys.stdin)
     Path(a.out).write_text(build(spec), encoding="utf-8")
-    print("wrote", a.out, "- import with: open -a 'Final Cut Pro'", quoteattr(a.out))
+    print("wrote", a.out, "- import with: open -g -a 'Final Cut Pro'", quoteattr(a.out))
 
 
 if __name__ == "__main__":
