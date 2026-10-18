@@ -13,20 +13,14 @@
           <spine>
             <gap name="Gap" offset="0s" start="0s" duration="73073/3750s">
             <title ref="r2" lane="1" offset="0s" start="0s" duration="1001/200s" name="Episode 5: The Kit Works - TF_Podcast_title">
-              <text><text-style ref="ts0_0">Episode 5: The Kit Works</text-style></text>
-              <text><text-style ref="ts0_1">Tiresias Foundation Podcast</text-style></text>
-              <text-style-def id="ts0_0"><text-style font="Futura" fontFace="Medium"/></text-style-def>
-              <text-style-def id="ts0_1"><text-style font="Futura" fontFace="Medium"/></text-style-def>
+              <text>Episode 5: The Kit Works</text>
+              <text>Tiresias Foundation Podcast</text>
             </title>
             <title ref="r3" lane="1" offset="1001/80s" start="0s" duration="3003/500s" name="~Timothy Snyder - Citation v2">
-              <text><text-style ref="ts1_0">~Timothy Snyder</text-style></text>
-              <text><text-style ref="ts1_1">On Tyranny: Twenty Lessons&#10;from the Twentieth Century</text-style></text>
-              <text><text-style ref="ts1_2">2017</text-style></text>
-              <text><text-style ref="ts1_3">Tim Duggan Books</text-style></text>
-              <text-style-def id="ts1_0"><text-style font="PT Serif" fontFace="Italic"/></text-style-def>
-              <text-style-def id="ts1_1"><text-style font="PT Serif" fontFace="Regular"/></text-style-def>
-              <text-style-def id="ts1_2"><text-style font="PT Serif" fontFace="Italic" fontSize="56"/></text-style-def>
-              <text-style-def id="ts1_3"><text-style font="PT Serif" fontFace="Bold Italic" fontSize="56"/></text-style-def>
+              <text>~Timothy Snyder</text>
+              <text>On Tyranny: Twenty Lessons&#10;from the Twentieth Century</text>
+              <text>2017</text>
+              <text>Tim Duggan Books</text>
             </title>
             </gap>
           </spine>

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import motionkit  # noqa: E402
 
 TITLES = motionkit.TEMPLATES_ROOT / "Titles.localized"
+MOTION_DEFAULT_SIZE = 48.0
 FONT_SWIFT = """
 import AppKit
 for n in CommandLine.arguments.dropFirst() {
@@ -71,7 +72,17 @@ def text_layers(path):
     return [n for n in info["nodes"] if n["kind"] == "Text"], info["duration_s"]
 
 
-def build(spec):
+def import_options(library):
+    """FCP imports straight into this .fcpbundle (created if missing), no library picker."""
+    url = Path(library).expanduser().resolve().as_uri()
+    return ("  <import-options>\n"
+            f'    <option key="library location" value={quoteattr(url)}/>\n'
+            '    <option key="copy assets" value="0"/>\n'
+            '    <option key="suppress warnings" value="1"/>\n'
+            "  </import-options>\n")
+
+
+def build(spec, library=None, style="none"):
     fps = spec.get("fps", 29.97)
     _, fd = frames(0, fps)
     templates, styles, cues_xml = {}, [], []
@@ -80,7 +91,7 @@ def build(spec):
             path, uid = find_template(cue["template"])
             layers, dur = text_layers(path)
             templates[cue["template"]] = {"id": f"r{len(templates) + 2}", "uid": uid, "layers": layers, "dur": dur}
-    faces = font_faces(l.get("font") for t in templates.values() for l in t["layers"])
+    faces = {} if style == "none" else font_faces(l.get("font") for t in templates.values() for l in t["layers"])
 
     end = 0
     for i, cue in enumerate(spec["cues"]):
@@ -93,11 +104,15 @@ def build(spec):
                 if key in wanted:
                     val = wanted.pop(key)
                     break
+            body = escape(val).replace(chr(10), "&#10;")
+            if style == "none":  # bare text: the template keeps its own font, size, colour
+                texts.append(f"<text>{body}</text>")
+                continue
             sid = f"ts{i}_{len(texts)}"
             fam, face = faces.get(layer.get("font"), (layer.get("font") or "Helvetica", "Regular"))
-            size = f' fontSize="{layer["size"]:g}"' if layer.get("size") else ""
-            styles.append(f'<text-style-def id="{sid}"><text-style font={quoteattr(fam)} fontFace={quoteattr(face)}{size}/></text-style-def>')
-            texts.append(f'<text><text-style ref="{sid}">{escape(val).replace(chr(10), "&#10;")}</text-style></text>')
+            size = layer.get("size") or MOTION_DEFAULT_SIZE  # absent Size param = Motion default
+            styles.append(f'<text-style-def id="{sid}"><text-style font={quoteattr(fam)} fontFace={quoteattr(face)} fontSize="{size:g}"/></text-style-def>')
+            texts.append(f'<text><text-style ref="{sid}">{body}</text-style></text>')
         if wanted:
             names = [l["name"] for l in t["layers"]]
             sys.exit(f"cue {i}: unknown text layers {list(wanted)}; {cue['template']} has {names}")
@@ -120,7 +135,7 @@ def build(spec):
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
 <fcpxml version="1.11">
-  <resources>
+{import_options(library) if library else ""}  <resources>
     {chr(10).join('    ' + r for r in res).strip()}
   </resources>
   <library>
@@ -144,10 +159,21 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec", nargs="?", help="JSON spec (default stdin)")
     ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("--library", help="target .fcpbundle for zero-click import (created if missing)")
+    ap.add_argument("--style", choices=["none", "font"], default="none",
+                    help="none: bare text, template styling wins; font: also send font/face/size")
+    ap.add_argument("--push", action="store_true", help="send to Final Cut Pro now, in the background")
     a = ap.parse_args()
+    if a.push and not a.library:
+        sys.exit("--push needs --library, or FCP blocks on a library picker")
     spec = json.load(open(a.spec) if a.spec else sys.stdin)
-    Path(a.out).write_text(build(spec), encoding="utf-8")
-    print("wrote", a.out, "- import with: open -g -a 'Final Cut Pro'", quoteattr(a.out))
+    Path(a.out).write_text(build(spec, a.library, a.style), encoding="utf-8")
+    print("wrote", a.out)
+    if a.push:
+        subprocess.run(["open", "-g", "-a", "Final Cut Pro", a.out], check=True)
+        print("sent to Final Cut Pro ->", a.library)
+    else:
+        print("import with: open -g -a 'Final Cut Pro'", quoteattr(a.out))
 
 
 if __name__ == "__main__":

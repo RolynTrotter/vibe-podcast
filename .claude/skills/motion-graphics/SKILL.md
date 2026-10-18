@@ -47,24 +47,29 @@ directors get a role suffix. Court cases go in the author slot.
    `xmllint --noout --dtdvalid <copy of FCPXMLv1_11.dtd> titles.fcpxml`. The DTDs are in
    `/Applications/Final Cut Pro.app/Contents/Frameworks/Interchange.framework/Versions/A/Resources/`.
    Copy one first, because xmllint fails on the path with spaces.
-4. The user imports it into FCP (`open -g -a "Final Cut Pro" titles.fcpxml`, then picks a library).
-   The titles sit connected above a gap, so they can be copied onto the real edit.
+4. Push it: add `--library <bundle> --push` (zero clicks). Without `--library`, FCP shows a
+   library picker, so leave that to the user. The titles sit connected above a gap, so they
+   can be copied onto the real edit.
 
 For a one-off baked card (e.g. a thumbnail or a card with a styling change FCP can't
 override), use `set-text` on the `.motn` and `open -g -a Motion OUT.motn` for the user to
 eyeball or export.
 
-## Known unknowns (verify, then update this file)
+## Verified in FCP 11.0.1 (2026-10-18)
 
-- **FCPXML `<text>` order → template layer mapping.** The generator emits one `<text>`
-  per text layer in **document order of the Motion file**. Confirm in FCP that the
-  Citation fields land in the right slots. If the order is wrong, fix `text_layers()` in
-  `titles_fcpxml.py`.
-- Whether the `text-style-def` (font family + face + size only) overrides the template's
-  colour/tracking. If it does, we may need to emit fuller styles.
-- Zero-click FCP import: add `<import-options>` (library location ending in `.fcpbundle`)
-  to the FCPXML and FCP imports without the library picker. A new path makes a throwaway
-  library. Not built yet, but it's the way to test the two questions above without the user.
+- **Zero-click import works:** `titles_fcpxml.py cues.json -o x.fcpxml --library path/To.fcpbundle --push`
+  adds `<import-options>` (library location, link assets, suppress warnings) and sends it with
+  `open -g`. FCP imports in the background and creates the library if it's missing. Use a throwaway
+  library under `scratch/fcp-test/` for tests, and never the user's real libraries without asking.
+- **`<text>` order = Motion document order of the Text layers.** Confirmed: Citation v2's author,
+  headline, date, and publication all land in the right slots.
+- **Send bare text (the default `--style none`).** Then the template keeps its own font, size, colour,
+  and shadow. `--style font` sends a `text-style-def` with family/face/size. Any style def
+  overrides the template, and layers with no `Size` param (Motion default 48) came out tiny
+  before the 48 fallback was added. Only use `--style font` to deliberately restyle.
+- The main title card (TF_Podcast_title) imports with its animation intact.
+- Read FCP state by `app_screenshot` on `com.apple.FinalCut`: click the event, then the
+  project icon in the browser (double-clicking the name starts a rename, so press Escape), then the ruler.
 
 ## Seeing and rendering (verified 2026-10-18)
 
