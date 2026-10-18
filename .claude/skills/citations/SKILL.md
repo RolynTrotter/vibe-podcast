@@ -41,6 +41,17 @@ Triage titles with Jev (`vibe-classification`) if the list is long.
   The tv client often doesn't save them.
 - 2b. Our own episodes: `citekit.py itt EP.itt --id podcastN --media EP.mp4 --out active_edits/<subject>/podcast --fix 'REGEX=>Right'`.
   FCP's captions mangle names. For episode 1: `--fix '\bver ?m+[iu]l+e?\b=>Vermeule' --fix '\bvermil\b=>Vermeule' --fix '\bAsian Vermeule=>Adrian Vermeule'`.
+  Episode 1 also has word-level fixes logged in `podcast/podcast1.fixes.json` (Schmidt→Schmitt etc.), replayed on re-import.
+
+### Fix mistranscriptions as you go (don't ask)
+
+When you notice a *definite* mis-hearing (a name, a garbled quote, a stutter Whisper doubled), fix it:
+`citekit.py fix TRANSCRIPT 'old words=>new words' [...] [--near SECONDS]`. It edits `<id>.json/.md` in place
+(new words share the old span's timing, matches can cross segments, trailing punctuation carries over),
+keeps the untouched engine output as `<id>.raw.json`, and logs every fix in `<id>.fixes.json`. `transcribe`
+and `itt` replay that log, so fixes survive a re-run. Unsure? Re-hear the spot instead of guessing:
+`ffmpeg -ss T -to T2 -i audio.m4a x.wav && mlx_whisper x.wav --output-format txt`. Fix first, then quote
+the fixed words: `locate` matches against the transcript.
 
 ## 3. Mine quotes (your judgment)
 
@@ -54,7 +65,7 @@ Triage titles with Jev (`vibe-classification`) if the list is long.
 4. Write `sources/quotes.json`:
 
 ```json
-{"project": "Ep1 Vermeule citations", "fps": 29.97,
+{"project": "Ep1 Vermeule citations", "fps": 29.97, "episode": "../podcast/podcast1.json",
  "quotes": [{"id": "publius-weak-exec", "source": "Bw9M01S8MFI", "approx": 1234,
    "text": "exact words from the transcript",
    "episode_at": 2575, "episode_context": "hosts on Hamilton and the Roman dictator",
@@ -62,6 +73,11 @@ Triage titles with Jev (`vibe-classification`) if the list is long.
    "citation": {"author": "~Adrian Vermeule", "title": "The Publius Paradox", "date": "5 Jun, 2018",
                 "publication": "Chorley Lecture, LSE"}}]}
 ```
+
+`episode` (relative to quotes.json) is our episode's transcript. With it, each quote's `episode_at` (roughly
+when the hosts raise the point) becomes an insert point: the end of the host's sentence running then.
+Quote whole thoughts. If the next sentence completes the image or argument, include it (a 5–25 s clip
+is the target, not a hard cap).
 
 `citation` defaults to video title, upload date and channel. Put the real venue and date (from the
 description) once per lecture in a top-level `"sources": {"<id>": {"citation": {...}}}`. A quote's own
@@ -77,10 +93,10 @@ is < 0.8) and writes to `sources/citations/`:
 
 | File | For |
 |---|---|
-| `citation_cues.json` | `agent-motion/titles_fcpxml.py`: Citation v2 lower thirds at `episode_at` (or laid end to end if unset) |
-| `clips.json` | agent-editing: source in/out, padded in/out (default 5 s each side, `--pad-before/--pad-after`, per-quote `pad_before`/`pad_after`), episode time, the quote |
+| `citations.md` | review sheet in episode order: insert time (as recorded, and after earlier inserts), the hosts' words right before the cut, the quote, source/clip times, YouTube `?t=` link |
+| `clips.json` | agent-editing: source in/out, padded in/out (default 5 s each side, `--pad-before/--pad-after`, per-quote `pad_before`/`pad_after`), `insert_at`, `insert_at_after_earlier_inserts`, `insert_after` |
+| `citation_cues.json` | `agent-motion/titles_fcpxml.py`: Citation v2 lower thirds timed for the episode *with clips inserted*, coming up as he starts speaking. Unplaced quotes are laid end to end |
 | `download_clips.sh` | the user runs it: full-quality video for only those padded ranges (`--download-sections`) |
-| `citations.md` | human review list with YouTube `?t=` links |
 
 Then `citekit.py audio-clips sources/citations/clips.json` cuts padded audio previews from the local
 audio, to check by ear. To place the lower thirds in FCP, follow the `motion-graphics` skill:

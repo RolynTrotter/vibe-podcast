@@ -88,8 +88,69 @@ def write_outputs(tr, out_dir, force):
 def transcripts(paths):
     for p in paths:
         p = Path(p)
-        for f in sorted(p.glob("*.json")) if p.is_dir() else [p]:
+        for f in sorted(f for f in p.glob("*.json") if f.name.count(".") == 1) if p.is_dir() else [p]:
             yield json.loads(f.read_text())
+
+
+# ---------- fixes ----------
+# Mis-hearings are fixed in place in transcripts/<id>.json. The untouched engine output is kept as
+# <id>.raw.json, and every fix is logged in <id>.fixes.json so a re-transcribe can replay it.
+
+def apply_fix(tr, old, new, near=None):
+    """Replace the word sequence `old` with `new`, spreading the new words over the old span's time.
+    Matches may cross segment boundaries; trailing punctuation of the old span carries over.
+    Returns how many places changed (all matches, or with `near` only the closest)."""
+    q = [norm(x) for x in old.split() if norm(x)]
+    flat = [(si, wi) for si, seg in enumerate(tr["segments"]) for wi in range(len(seg["words"]))]
+    word = lambda k: tr["segments"][flat[k][0]]["words"][flat[k][1]]
+    toks = [norm(word(k)["w"]) for k in range(len(flat))]
+    hits = [k for k in range(len(toks) - len(q) + 1) if q and toks[k:k + len(q)] == q]
+    if near is not None and hits:
+        hits = [min(hits, key=lambda k: abs(word(k)["start"] - near))]
+    for k in reversed(hits):
+        span = [flat[j] for j in range(k, k + len(q))]
+        t0, t1 = word(k)["start"], word(k + len(q) - 1)["end"]
+        new_toks = new.split()
+        tail = re.search(r"[.,;:?!\"']+$", word(k + len(q) - 1)["w"])
+        if tail and new_toks and not re.search(r"[.,;:?!\"']$", new_toks[-1]):
+            new_toks[-1] += tail.group()
+        step = (t1 - t0) / max(len(new_toks), 1)
+        repl = [{"w": t, "start": round(t0 + n * step, 2), "end": round(t0 + (n + 1) * step, 2)}
+                for n, t in enumerate(new_toks)]
+        for si, wi in reversed(span[1:]):  # drop the old words after the first...
+            del tr["segments"][si]["words"][wi]
+        si, wi = span[0]  # ...and swap the first for the whole replacement
+        tr["segments"][si]["words"][wi:wi + 1] = repl
+        for s_i in {x for x, _ in span}:
+            seg = tr["segments"][s_i]
+            seg["text"] = " ".join(w["w"] for w in seg["words"])
+    return len(hits)
+
+
+def replay_fixes(tr, out_dir):
+    log = Path(out_dir) / f"{tr['source']['id']}.fixes.json"
+    if log.exists():
+        for f in json.loads(log.read_text()):
+            n = apply_fix(tr, f["from"], f["to"], f.get("near"))
+            print(f"  replayed fix {f['from']!r} -> {f['to']!r}: {n}")
+
+
+def cmd_fix(a):
+    js = Path(a.transcript)
+    tr = json.loads(js.read_text())
+    raw = js.with_name(js.stem + ".raw.json")
+    if not raw.exists():
+        raw.write_text(js.read_text())
+    log = js.with_name(js.stem + ".fixes.json")
+    fixes = json.loads(log.read_text()) if log.exists() else []
+    for spec in a.fix:
+        old, new = (x.strip() for x in spec.split("=>", 1))
+        n = apply_fix(tr, old, new, a.near)
+        print(f"{old!r} -> {new!r}: {n} place(s)")
+        if n:
+            fixes.append({"from": old, "to": new, **({"near": a.near} if a.near is not None else {})})
+    log.write_text(json.dumps(fixes, ensure_ascii=False, indent=1))
+    write_outputs(tr, js.parent, force=True)
 
 
 # ---------- transcribe / captions ----------
@@ -125,8 +186,11 @@ def cmd_transcribe(a):
                            for w in s.get("words", [])]}
                 for s in raw["segments"] if s["text"].strip()]
         src.pop("description", None)
-        write_outputs({"source": src, "engine": f"mlx-whisper:{a.model.split('/')[-1]}", "segments": segs},
-                      out_dir, a.force)
+        tr = {"source": src, "engine": f"mlx-whisper:{a.model.split('/')[-1]}", "segments": segs}
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{src['id']}.raw.json").write_text(json.dumps(tr, ensure_ascii=False, indent=1))
+        replay_fixes(tr, out_dir)
+        write_outputs(tr, out_dir, a.force)
 
 
 def cmd_captions(a):
@@ -182,7 +246,11 @@ def cmd_itt(a):
                       for k, t in enumerate(toks)]
     src = {"id": a.id, "title": a.title or Path(a.itt).stem, "channel": "Tiresias Foundation Podcast",
            "upload_date": None, "url": None, "duration": segs[-1]["end"] if segs else None, "media": a.media}
-    write_outputs({"source": src, "engine": "fcp-captions", "segments": segs}, a.out, a.force)
+    tr = {"source": src, "engine": "fcp-captions", "segments": segs}
+    Path(a.out).mkdir(parents=True, exist_ok=True)
+    (Path(a.out) / f"{a.id}.raw.json").write_text(json.dumps(tr, ensure_ascii=False, indent=1))
+    replay_fixes(tr, a.out)
+    write_outputs(tr, a.out, a.force)
 
 
 # ---------- search / locate ----------
@@ -243,8 +311,20 @@ def default_citation(src):
     return {"title": src.get("title") or "", "date": date, "publication": src.get("channel") or ""}
 
 
+def insert_point(ep, t, lead_words=30):
+    """Where in our episode a clip about moment `t` should go: the end of the host's sentence that is
+    running at `t` (first segment at or after it ending in . ? !). Returns (time, lead-in text)."""
+    segs = ep["segments"]
+    i = max([k for k, sg in enumerate(segs) if sg["start"] <= t] or [0])
+    j = i
+    while j < min(i + 6, len(segs) - 1) and not re.search(r"[.?!]$", segs[j]["text"].strip()):
+        j += 1
+    lead = " ".join(sg["text"] for sg in segs[max(0, i - 2):j + 1]).split()
+    return segs[j]["end"], ("…" if len(lead) > lead_words else "") + " ".join(lead[-lead_words:])
+
+
 def cmd_cues(a):
-    """quotes.json -> Citation v2 cue JSON (for agent-motion/titles_fcpxml.py), clip list, clip script."""
+    """quotes.json -> Citation v2 cues (agent-motion/titles_fcpxml.py), clip list, clip script, review sheet."""
     qfile = Path(a.quotes)
     spec = json.loads(qfile.read_text())
     tdir = Path(a.transcripts or qfile.parent / "transcripts")
@@ -254,11 +334,10 @@ def cmd_cues(a):
                                       ("sh", "download_clips.sh"), ("md", "citations.md"))}
     for f in files.values():
         guard(f, a.force)
+    ep_path = a.episode or (spec.get("episode") and qfile.parent / spec["episode"])
+    ep = json.loads(Path(ep_path).read_text()) if ep_path else None
 
-    cache, cues, clips, sh, md = {}, [], [], ["#!/bin/sh", "# Full-quality video for each quote, padded.",
-                                                 "# Run from the batch folder; writes into clips/.", "set -e",
-                                                 "mkdir -p clips"], ["# Citations", ""]
-    at = 0.0
+    cache, items = {}, []
     for q in spec["quotes"]:
         sid = q["source"]
         if sid not in cache:
@@ -276,35 +355,66 @@ def cmd_cues(a):
         pin, pout = max(0.0, start - pb), end + pa
         if src.get("duration"):
             pout = min(pout, src["duration"])
+        ins, lead = (None, "")
+        if ep and "episode_at" in q:
+            ins, lead = insert_point(ep, q["episode_at"])
+        items.append(dict(q=q, src=src, start=start, end=end, score=score, matched=matched,
+                          pin=round(pin, 2), pout=round(pout, 2), ins=ins, lead=lead))
+
+    # Review/edit order = episode order. Inserting each padded clip pushes later material back, so also
+    # give the time each insert lands at once the earlier clips are in (titles go there, on the clip).
+    items.sort(key=lambda it: (it["ins"] is None, it["ins"] or 0))
+    shift, draft_at = 0.0, 0.0
+    cues, clips = [], []
+    sh = ["#!/bin/sh", "# Full-quality video for each quote, padded.", "# Run from the batch folder; writes into clips/.",
+          "set -e", "mkdir -p clips"]
+    md = ["# Citations", "",
+          f"Episode: {ep['source']['title']}" if ep else "No episode transcript given (`episode` in quotes.json).",
+          "", "Times in the episode are as recorded. *After earlier inserts* assumes every clip above is "
+          "cut in whole, padding included.", ""]
+    for it in items:
+        q, src, sid = it["q"], it["src"], it["q"]["source"]
         cit = {**default_citation(src), **spec.get("sources", {}).get(sid, {}).get("citation", {}), **q.get("citation", {})}
         texts = {SLOTS[k]: v for k, v in cit.items() if k in SLOTS and v}
-        dur = q.get("card_duration", max(5.0, min(end - start, 10.0)))
-        # Episode time if the miner tied the quote to a moment in our episode; else lay drafts end to end.
-        cue_at = q.get("episode_at", at)
+        clip_len = it["pout"] - it["pin"]
+        dur = q.get("card_duration", max(5.0, min(it["end"] - it["start"], 10.0)))
+        if it["ins"] is not None:
+            shifted = it["ins"] + shift
+            # the card comes up as he starts speaking, i.e. after the lead-in padding
+            cue_at = shifted + (it["start"] - it["pin"])
+            shift += clip_len
+        else:
+            shifted, cue_at = None, draft_at
+        draft_at = max(draft_at, cue_at) + dur + 2
         cues.append({"template": q.get("template", CITATION_TEMPLATE), "at": round(cue_at, 2), "duration": dur,
-                     "name": q["id"], "texts": texts, "episode_at_set": "episode_at" in q,
-                     "source": {"id": sid, "url": src.get("url"), "in": start, "out": end}})
-        at = max(at, cue_at) + dur + 2
+                     "name": q["id"], "texts": texts, "placed": it["ins"] is not None,
+                     "source": {"id": sid, "url": src.get("url"), "in": it["start"], "out": it["end"]}})
         clips.append({"id": q["id"], "source_id": sid, "source_url": src.get("url"), "title": src.get("title"),
-                      "quote": q["text"], "matched": matched, "score": score,
-                      "in": start, "out": end, "padded_in": round(pin, 2), "padded_out": round(pout, 2),
-                      "in_tc": hms(start), "out_tc": hms(end), "link": link(src, start),
+                      "quote": q["text"], "matched": it["matched"], "score": it["score"],
+                      "in": it["start"], "out": it["end"], "padded_in": it["pin"], "padded_out": it["pout"],
+                      "in_tc": hms(it["start"]), "out_tc": hms(it["end"]), "link": link(src, it["start"]),
                       "local_audio": str((qfile.parent / "audio" / f"{sid}.m4a").resolve()),
                       "episode_at": q.get("episode_at"), "episode_context": q.get("episode_context", ""),
+                      "insert_at": it["ins"], "insert_at_after_earlier_inserts": shifted, "insert_after": it["lead"],
                       "why": q.get("why", ""), "tags": q.get("tags", []), "citation": cit})
         sh.append(f"yt-dlp --cookies-from-browser firefox --extractor-args 'youtube:player_client=tv,web_safari,mweb' "
-                  f"-f 'bv*[height<=1080]+ba/b' --download-sections '*{pin:.2f}-{pout:.2f}' --force-keyframes-at-cuts "
-                  f"--no-overwrites -o 'clips/{q['id']}.%(ext)s' {shlex.quote(src.get('url') or sid)}")
-        md += [f"## {q['id']}  ({hms(start)}–{hms(end)}, match {score})", "",
-               f"> {q['text']}", "", f"- {cit.get('author', '')} · *{cit['title'].replace(chr(10), ' ')}* · {cit['date']} · {cit['publication']}",
-               f"- {link(src, start)}", f"- why: {q.get('why', '')}"]
-        if "episode_at" in q:
-            md.append(f"- episode {hms(q['episode_at'])}: {q.get('episode_context', '')}")
-        md.append("")
+                  f"-f 'bv*[height<=1080]+ba/b' --download-sections '*{it['pin']:.2f}-{it['pout']:.2f}' "
+                  f"--force-keyframes-at-cuts --no-overwrites -o 'clips/{q['id']}.%(ext)s' {shlex.quote(src.get('url') or sid)}")
+        where = (f"episode ~{hms(it['ins'])} (after earlier inserts: {hms(shifted)})" if it["ins"] is not None
+                 else "episode: unplaced")
+        md += [f"## {q['id']}", "", f"**Insert at {where}**", ""]
+        if it["lead"]:
+            md += [f"After the hosts say: “{it['lead']}”", ""]
+        md += [f"> {q['text']}", "",
+               f"- source {hms(it['start'])}–{hms(it['end'])} (clip {hms(it['pin'])}–{hms(it['pout'])}, "
+               f"{clip_len:.0f} s; match {it['score']}) · {link(src, it['start'])}",
+               f"- {cit.get('author', '')} · *{cit['title'].replace(chr(10), ' ')}* · {cit['date']} · {cit['publication']}",
+               f"- why: {q.get('why', '')}", ""]
 
     files["cues"].write_text(json.dumps({"project": spec.get("project", f"{qfile.parent.name} citations"),
                                          "fps": spec.get("fps", 29.97), "cues": cues}, ensure_ascii=False, indent=1))
-    files["clips"].write_text(json.dumps({"pad_before": a.pad_before, "pad_after": a.pad_after, "clips": clips},
+    files["clips"].write_text(json.dumps({"pad_before": a.pad_before, "pad_after": a.pad_after,
+                                          "episode": str(ep_path) if ep_path else None, "clips": clips},
                                          ensure_ascii=False, indent=1))
     files["sh"].write_text("\n".join(sh) + "\n")
     files["sh"].chmod(0o755)
@@ -341,6 +451,12 @@ def main():
     p.add_argument("--out"), p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_transcribe)
 
+    p = sub.add_parser("fix", help="correct a mis-heard word sequence in a transcript (logged, replayed)")
+    p.add_argument("transcript")
+    p.add_argument("fix", nargs="+", metavar="'OLD WORDS=>NEW WORDS'")
+    p.add_argument("--near", type=float, help="only the match closest to this time (seconds)")
+    p.set_defaults(fn=cmd_fix)
+
     p = sub.add_parser("captions", help="YouTube .json3 auto-captions -> transcript (fast fallback)")
     p.add_argument("json3", nargs="+")
     p.add_argument("--out"), p.add_argument("--force", action="store_true")
@@ -367,6 +483,7 @@ def main():
     p = sub.add_parser("cues", help="quotes.json -> citation cues, clip list, clip download script")
     p.add_argument("quotes")
     p.add_argument("--transcripts"), p.add_argument("--out")
+    p.add_argument("--episode", help="our episode's transcript .json (default: `episode` in quotes.json)")
     p.add_argument("--pad-before", type=float, default=PAD_BEFORE)
     p.add_argument("--pad-after", type=float, default=PAD_AFTER)
     p.add_argument("--force", action="store_true")
