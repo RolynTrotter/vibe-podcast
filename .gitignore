@@ -8,3 +8,8 @@ __pycache__/
 *.m4a
 *.mp3
 *.bak-*
+
+# Per-subject working folders (downloads, transcripts, quotes, renders) stay local.
+# Only the README explaining the layout is tracked.
+active_edits/*
+!active_edits/README.md
