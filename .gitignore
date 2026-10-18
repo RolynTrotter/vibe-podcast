@@ -1,0 +1,9 @@
+.DS_Store
+scratch/
+__pycache__/
+*.fcpbundle/
+*.mov
+*.mp4
+*.wav
+*.m4a
+*.mp3

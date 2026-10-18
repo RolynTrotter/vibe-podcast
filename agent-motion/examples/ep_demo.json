@@ -1,0 +1,8 @@
+{"project": "Demo titles", "fps": 29.97,
+ "cues": [
+  {"template": "TF_Podcast_title", "at": 0,
+   "texts": {"Episode 4: Carl Schmitt": "Episode 5: The Kit Works"}},
+  {"template": "Citation v2", "at": 12.5, "duration": 6,
+   "texts": {"~Author Lastname": "~Timothy Snyder",
+             "Person Writes Silly Headline to": "On Tyranny: Twenty Lessons\nfrom the Twentieth Century",
+             "Publication": "Tim Duggan Books", "20 Apr, 1969": "2017"}}]}
